@@ -116,9 +116,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             image *= alpha_mask
 
         # Loss
-        # gt_image = viewpoint_cam.original_image.cuda()
-        # ✅ 新代码 (惰性加载)
-        gt_image = viewpoint_cam.load_image_to_gpu()
+        gt_image = viewpoint_cam.original_image.cuda()
+        
         Ll1 = l1_loss(image, gt_image)
         if FUSED_SSIM_AVAILABLE:
             ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))

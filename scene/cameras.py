@@ -17,9 +17,11 @@ from utils.general_utils import PILtoTorch
 import cv2
 
 class Camera(nn.Module):
-    def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
-                 image_name, uid, trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", 
-                 image_path=None): # <--- 新增 image_path 参数
+    def __init__(self, resolution, colmap_id, R, T, FoVx, FoVy, depth_params, image, invdepthmap,
+                 image_name, uid,
+                 trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda",
+                 train_test_exp = False, is_test_dataset = False, is_test_view = False
+                 ):
         super(Camera, self).__init__()
 
         self.uid = uid
@@ -29,13 +31,6 @@ class Camera(nn.Module):
         self.FoVx = FoVx
         self.FoVy = FoVy
         self.image_name = image_name
-        self.image_path = image_path # <--- 保存路径
-        self.data_device = data_device
-        self.original_image = None # <--- 初始不存图像数据
-
-        # 如果没有提供路径（兼容旧代码），则保留原逻辑
-        if image_path is None and image is not None:
-             self.original_image = image.clamp(0.0, 1.0).to(self.data_device)
 
         try:
             self.data_device = torch.device(data_device)
@@ -92,25 +87,7 @@ class Camera(nn.Module):
         self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
         self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
         self.camera_center = self.world_view_transform.inverse()[3, :3]
-        # === 新增方法：按需加载图像 ===
-    def load_image_to_gpu(self):
-        if self.original_image is not None:
-            return self.original_image
-
-        if self.image_path is None:
-            raise ValueError("No image path provided for lazy loading!")
-
-        # 实时读取图像 (这就不会占用 300G 内存了)
-        pil_image = Image.open(self.image_path)
         
-        # 这里需要复制 dataset_readers.py 里的预处理逻辑
-        # 简单示例，你需要确保和之前的处理一致 (归一化, resize等)
-        resized_image_rgb = PILtoTorch(pil_image, (self.image_width, self.image_height))
-        
-        # 传到 GPU
-        gt_image = resized_image_rgb[:3, ...].clamp(0.0, 1.0).to(self.data_device)
-        
-        return gt_image
 class MiniCam:
     def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):
         self.image_width = width
