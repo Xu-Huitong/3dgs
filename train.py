@@ -22,9 +22,6 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
-# [新增] 引入 torchvision 用于保存图片
-from torchvision.utils import save_image
-
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -114,14 +111,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
-        # [修正] 强制将 alpha_mask 移动到与 image 相同的设备上
         if viewpoint_cam.alpha_mask is not None:
-            alpha_mask = viewpoint_cam.alpha_mask.to(image.device)
+            alpha_mask = viewpoint_cam.alpha_mask.cuda()
             image *= alpha_mask
 
         # Loss
-        # [Fixed] Use get_gt_image() instead of original_image to fix AttributeError
-        gt_image = viewpoint_cam.get_gt_image().to(image.device)
+        gt_image = viewpoint_cam.original_image.cuda()
         
         Ll1 = l1_loss(image, gt_image)
         if FUSED_SSIM_AVAILABLE:
@@ -234,43 +229,15 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
-                    # 1. 获取渲染结果 (image, depth等)
-                    render_pkg = renderFunc(viewpoint, scene.gaussians, *renderArgs)
-                    image = torch.clamp(render_pkg["render"], 0.0, 1.0)
-                    
-                    # 2. 获取 Ground Truth
-                    # [Fixed] Use get_gt_image() instead of original_image and ensure it's on GPU
-                    gt_image = torch.clamp(viewpoint.get_gt_image().to("cuda"), 0.0, 1.0)
-                    
+                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
+                    gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     if train_test_exp:
                         image = image[..., image.shape[-1] // 2:]
                         gt_image = gt_image[..., gt_image.shape[-1] // 2:]
-                    
                     if tb_writer and (idx < 5):
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
                         if iteration == testing_iterations[0]:
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
-                    
-                    # 3. [保存深度图逻辑]
-                    pipe_args = renderArgs[0] # renderArgs 顺序： (pipe, background, ...)
-                    if pipe_args.save_depth:
-                        depth = render_pkg["depth"]
-                        # 简单的归一化以便可视化 (0-1)
-                        if depth.max() > 0:
-                            depth_viz = depth / depth.max()
-                        else:
-                            depth_viz = depth
-                        
-                        # (A) 保存到 Tensorboard
-                        if tb_writer and (idx < 5):
-                            tb_writer.add_images(config['name'] + "_view_{}/depth".format(viewpoint.image_name), depth_viz[None], global_step=iteration)
-                        
-                        # (B) 保存到本地硬盘
-                        # 路径: {model_path}/depth_logs/iteration_{iter}/{train/test}/image_name.png
-                        depth_log_dir = os.path.join(scene.model_path, "depth_logs", f"iteration_{iteration}", config['name'])
-                        os.makedirs(depth_log_dir, exist_ok=True)
-                        save_image(depth_viz, os.path.join(depth_log_dir, f"{viewpoint.image_name}.png"))
-
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
