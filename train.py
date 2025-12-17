@@ -120,8 +120,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             image *= alpha_mask
 
         # Loss
-        # [修正] 确保 gt_image 也移动到 GPU
-        gt_image = viewpoint_cam.original_image.to(image.device)
+        # [Fixed] Use get_gt_image() instead of original_image to fix AttributeError
+        gt_image = viewpoint_cam.get_gt_image().to(image.device)
         
         Ll1 = l1_loss(image, gt_image)
         if FUSED_SSIM_AVAILABLE:
@@ -239,8 +239,8 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     image = torch.clamp(render_pkg["render"], 0.0, 1.0)
                     
                     # 2. 获取 Ground Truth
-                    # [修正] 确保 gt_image 也在 GPU 上
-                    gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
+                    # [Fixed] Use get_gt_image() instead of original_image and ensure it's on GPU
+                    gt_image = torch.clamp(viewpoint.get_gt_image().to("cuda"), 0.0, 1.0)
                     
                     if train_test_exp:
                         image = image[..., image.shape[-1] // 2:]
